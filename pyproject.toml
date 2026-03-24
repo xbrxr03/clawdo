@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "claw-do"
+version = "0.1.0"
+description = "Natural language to shell commands. Offline. Private. Safe by default."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "ClawOS", email = "hello@clawos.dev" }
+]
+keywords = ["cli", "shell", "ai", "ollama", "local-ai", "clawos"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Shells",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "click>=8.0",
+    "ollama>=0.2",
+    "rich>=13.0",
+    "gitpython>=3.1",
+    "json-repair>=0.25",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+claw-do = "claw_do.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/xbrxr03/claw-do"
+Repository = "https://github.com/xbrxr03/claw-do"
+Issues = "https://github.com/xbrxr03/claw-do/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["claw_do*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
