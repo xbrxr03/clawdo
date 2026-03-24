@@ -1,18 +1,13 @@
 """
 cli.py — claw-do CLI entrypoint.
-
-Usage:
-  claw-do "find large files"
-  claw-do --dry "delete temp files"
-  claw-do --yes "list disk usage"
-  claw-do --model qwen2.5-coder:7b "set up venv"
-  claw-do --no-context "list files"
-
-ClawOS integration: also callable as `claw do "..."` via do.py wrapper.
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
+from pathlib import Path
 
 import click
 
@@ -29,77 +24,133 @@ from claw_do.renderer import (
     show_audit_note,
     show_spinner_start,
 )
-from claw_do.runner import log_command, run_commands
+from claw_do.runner import log_command, run_commands, _audit_log_path
 from claw_do.safety import classify
 
 
-@click.command(name="claw-do")
-@click.argument("request", nargs=-1, required=True)
-@click.option(
-    "--dry", is_flag=True, default=False,
-    help="Show the command but never run it.",
-)
-@click.option(
-    "--yes", "-y", is_flag=True, default=False,
-    help="Skip confirmation for safe commands. Never bypasses dangerous command protection.",
-)
-@click.option(
-    "--model", "-m", default=None,
-    help="Ollama model to use (e.g. qwen2.5:7b). Auto-detected if not set.",
-)
-@click.option(
-    "--no-context", "no_context", is_flag=True, default=False,
-    help="Don't inject workspace context into the prompt.",
-)
-@click.option(
-    "--clawos", is_flag=True, default=False,
-    help="Enable ClawOS mode: PINNED.md facts + policyd integration.",
-)
-@click.option(
-    "--ollama-host", default="http://localhost:11434", show_default=True,
-    help="Ollama server URL.",
-)
-@click.option(
-    "--no-audit", is_flag=True, default=False,
-    help="Skip writing to the audit log.",
-)
-@click.version_option(version=__version__, prog_name="claw-do")
-def main(
-    request: tuple[str, ...],
-    dry: bool,
-    yes: bool,
-    model: str | None,
-    no_context: bool,
-    clawos: bool,
-    ollama_host: str,
-    no_audit: bool,
-) -> None:
-    """
-    Natural language → shell commands. Offline. Safe by default.
+def _read_audit_log(n: int = 20) -> list[dict]:
+    log_path = _audit_log_path()
+    if not log_path.exists():
+        return []
+    try:
+        lines = log_path.read_text().strip().splitlines()
+        entries = []
+        for line in lines:
+            try:
+                entries.append(json.loads(line))
+            except Exception:
+                pass
+        return entries[-n:]
+    except Exception:
+        return []
 
-    \b
-    Examples:
-      claw-do "find all files larger than 1GB"
-      claw-do "compress logs older than 7 days and archive them"
-      claw-do --dry "delete all .pyc files"
-      claw-do --yes "show disk usage by directory"
-    """
+
+def _read_bash_history(n: int = 10) -> list[str]:
+    history_file = Path.home() / ".bash_history"
+    if not history_file.exists():
+        return []
+    try:
+        lines = history_file.read_text(errors="ignore").strip().splitlines()
+        lines = [l for l in lines if not l.startswith("claw-do") and not l.startswith("~/bin/claw-do")]
+        return lines[-n:]
+    except Exception:
+        return []
+
+
+def _infer_undo(command: str) -> str | None:
+    import re
+    m = re.match(r'mv\s+(\S+)\s+(\S+)', command)
+    if m:
+        return f"mv {m.group(2)} {m.group(1)}"
+    m = re.match(r'mkdir(?:\s+-p)?\s+(\S+)', command)
+    if m:
+        return f"rmdir {m.group(1)}"
+    m = re.match(r'cp\s+(?:-\w+\s+)?(\S+)\s+(\S+)', command)
+    if m:
+        return f"rm {m.group(2)}"
+    m = re.match(r'touch\s+(\S+)', command)
+    if m:
+        return f"rm {m.group(1)}"
+    return None
+
+
+@click.command(name="claw-do")
+@click.argument("request", nargs=-1, required=False)
+@click.option("--dry", is_flag=True, default=False)
+@click.option("--yes", "-y", is_flag=True, default=False)
+@click.option("--model", "-m", default=None)
+@click.option("--no-context", "no_context", is_flag=True, default=False)
+@click.option("--clawos", is_flag=True, default=False)
+@click.option("--ollama-host", default="http://localhost:11434")
+@click.option("--no-audit", is_flag=True, default=False)
+@click.option("--history", is_flag=True, default=False, help="Show last 10 commands run.")
+@click.option("--undo", is_flag=True, default=False, help="Reverse the last command.")
+@click.option("--explain", is_flag=True, default=False, help="Explain the command instead of running it.")
+@click.option("--step", is_flag=True, default=False, help="Confirm each step of a multi-step plan individually.")
+@click.version_option(version=__version__, prog_name="claw-do")
+def main(request, dry, yes, model, no_context, clawos, ollama_host, no_audit, history, undo, explain, step):
+    """Natural language to shell commands. Offline. Safe by default."""
+
+    if history:
+        entries = _read_audit_log(10)
+        if not entries:
+            console.print("\n  [dim]No command history yet.[/dim]\n")
+            return
+        console.print()
+        console.print("  [bold blue]◆[/bold blue]  [bold]Recent commands[/bold]")
+        console.print("  " + "─" * 53)
+        for e in reversed(entries):
+            ts = e["timestamp"][:16].replace("T", " ")
+            cmds = " && ".join(e["commands"])
+            approved = "[green]✓[/green]" if e["approved"] else "[red]✗[/red]"
+            dangerous = " [yellow]⚠[/yellow]" if e.get("is_dangerous") else ""
+            console.print(f"  {approved}{dangerous}  [dim]{ts}[/dim]  [cyan]{cmds}[/cyan]")
+        console.print("  " + "─" * 53)
+        console.print()
+        return
+
+    if undo:
+        entries = _read_audit_log(20)
+        last = next((e for e in reversed(entries) if e["approved"] and not e.get("is_dangerous")), None)
+        if not last:
+            console.print("\n  [dim]No undoable command found in history.[/dim]\n")
+            return
+        cmd = " && ".join(last["commands"])
+        inverse = _infer_undo(cmd)
+        console.print()
+        console.print("  [bold blue]◆[/bold blue]  [bold]Last command[/bold]")
+        console.print("  " + "─" * 53)
+        console.print(f"  [cyan]{cmd}[/cyan]")
+        console.print("  " + "─" * 53)
+        if inverse:
+            console.print("  [bold blue]◆[/bold blue]  [bold]Suggested undo[/bold]")
+            console.print("  " + "─" * 53)
+            console.print(f"  [cyan]{inverse}[/cyan]")
+            console.print("  " + "─" * 53)
+            console.print()
+            from rich.prompt import Confirm
+            if Confirm.ask("  Run undo?", default=False):
+                run_commands([inverse])
+                console.print("  [green]✓[/green]  Done\n")
+        else:
+            console.print("  [dim]No automatic undo available for this command.[/dim]\n")
+        return
+
+    if not request:
+        show_error('Please provide a request. Example: claw-do "show disk usage"')
+        sys.exit(1)
+
     request_str = " ".join(request)
 
-    # ── Detect ClawOS mode automatically ──────────────────────────────────────
     if not clawos:
-        from pathlib import Path
-        clawos_root = Path.home() / "clawos"
-        if clawos_root.exists():
+        if (Path.home() / "clawos").exists():
             clawos = True
 
-    # ── Build context label for display ───────────────────────────────────────
-    context_label: str | None = None
-    if not no_context and clawos:
-        ws = workspace_name()
+    context_label = None
+    if not no_context:
         from claw_do.context import git_branch
+        ws = workspace_name()
         branch = git_branch()
-        import os
         cwd_short = os.path.basename(os.getcwd())
         parts = []
         if ws:
@@ -109,13 +160,19 @@ def main(
         parts.append(f"~/{cwd_short}" if cwd_short else "~")
         context_label = " · ".join(parts)
 
-    # ── Generate command ───────────────────────────────────────────────────────
+    extra_ctx = {}
+    if not no_context:
+        recent_cmds = _read_bash_history(10)
+        if recent_cmds:
+            extra_ctx["recent_shell_history"] = "; ".join(recent_cmds[-5:])
+
     show_spinner_start("Generating command...")
 
     try:
         commands = generate_command(
             request=request_str,
             model=model,
+            extra_context=extra_ctx if extra_ctx else None,
             clawos_mode=clawos and not no_context,
             ollama_host=ollama_host,
         )
@@ -127,10 +184,31 @@ def main(
         show_error("No command generated.")
         sys.exit(1)
 
-    # ── Classify safety ───────────────────────────────────────────────────────
+    if explain:
+        try:
+            import ollama as _ollama
+            cmd_str = " && ".join(commands)
+            client = _ollama.Client(host=ollama_host)
+            response = client.chat(
+                model=model or "qwen2.5:7b",
+                messages=[{"role": "user", "content": f"Explain what this shell command does in plain English, 2-3 sentences max. Be specific.\n\nCommand: {cmd_str}"}],
+                options={"temperature": 0.1, "num_predict": 200},
+            )
+            explanation = response["message"]["content"].strip()
+        except Exception as e:
+            explanation = f"Could not generate explanation: {e}"
+        console.print()
+        console.print("  [bold blue]◆[/bold blue]  [bold]Command[/bold]")
+        console.print("  " + "─" * 53)
+        for cmd in commands:
+            console.print(f"  [cyan]{cmd}[/cyan]")
+        console.print("  " + "─" * 53)
+        console.print("  [bold blue]◆[/bold blue]  [bold]What it does[/bold]")
+        console.print(f"  {explanation}\n")
+        return
+
     is_dangerous, danger_reason, danger_level = classify(commands)
 
-    # ── Display ───────────────────────────────────────────────────────────────
     show_commands(
         commands=commands,
         is_dangerous=is_dangerous,
@@ -139,7 +217,26 @@ def main(
         context_label=context_label if not no_context else None,
     )
 
-    # ── Confirm ───────────────────────────────────────────────────────────────
+    if step and len(commands) > 1:
+        exit_code = 0
+        console.print()
+        for i, cmd in enumerate(commands, 1):
+            console.print(f"  [bold blue]Step {i}/{len(commands)}:[/bold blue] [cyan]{cmd}[/cyan]")
+            _, dr, dl = classify([cmd])
+            should_run = confirm_run([cmd], is_dangerous=dr, danger_level=dl, dry=dry, yes=yes)
+            if not should_run:
+                console.print(f"  [dim]Stopped at step {i}.[/dim]\n")
+                break
+            show_running([cmd])
+            exit_code = run_commands([cmd])
+            show_success(exit_code)
+            if exit_code != 0:
+                console.print(f"  [red]Step {i} failed. Stopping.[/red]\n")
+                break
+        if not no_audit:
+            log_command(request_str, commands, exit_code, is_dangerous, True, dry)
+        sys.exit(exit_code)
+
     should_run = confirm_run(
         commands=commands,
         is_dangerous=is_dangerous,
@@ -148,14 +245,12 @@ def main(
         yes=yes,
     )
 
-    # ── Execute ───────────────────────────────────────────────────────────────
     exit_code = 0
     if should_run:
         show_running(commands)
         exit_code = run_commands(commands)
         show_success(exit_code)
 
-    # ── Audit log ─────────────────────────────────────────────────────────────
     if not no_audit:
         log_path = log_command(
             request=request_str,
@@ -170,6 +265,6 @@ def main(
 
     sys.exit(exit_code if should_run else 0)
 
+
 if __name__ == '__main__':
     main()
-
