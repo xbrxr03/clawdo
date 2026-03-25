@@ -142,3 +142,29 @@ def show_error(message: str) -> None:
 def show_audit_note(log_path: str) -> None:
     """Show a small audit log note (ClawOS mode)."""
     console.print(f"  [dim]Logged → {log_path}[/dim]\n")
+
+
+def show_dry_preview(affected_files: list[str]) -> None:
+    """Show files that would be affected in dry-run mode."""
+    if not affected_files:
+        return
+    console.print(f"  [bold blue]◆[/bold blue]  [bold]Would affect {len(affected_files)} file(s)[/bold]")
+    console.print("  " + "─" * 53)
+    for f in affected_files:
+        console.print(f"  [dim]{f}[/dim]")
+    if len(affected_files) == 10:
+        console.print("  [dim]... and possibly more[/dim]")
+    console.print("  " + "─" * 53)
+
+
+def show_dry_preview(affected_files: list[str]) -> None:
+    """Show files that would be affected in dry-run mode."""
+    if not affected_files:
+        return
+    console.print(f"  [bold blue]◆[/bold blue]  [bold]Would affect {len(affected_files)} file(s)[/bold]")
+    console.print("  " + "─" * 53)
+    for f in affected_files[:10]:
+        console.print(f"  [dim]{f}[/dim]")
+    if len(affected_files) == 10:
+        console.print("  [dim]... and possibly more[/dim]")
+    console.print("  " + "─" * 53)

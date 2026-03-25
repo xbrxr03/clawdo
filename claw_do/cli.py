@@ -209,6 +209,11 @@ def main(request, dry, yes, model, no_context, clawos, ollama_host, no_audit, hi
 
     is_dangerous, danger_reason, danger_level = classify(commands)
 
+    if dry and not explain:
+        from claw_do.runner import preview_affected_files
+        from claw_do.renderer import show_dry_preview
+        affected = preview_affected_files(commands)
+        show_dry_preview(affected)
     show_commands(
         commands=commands,
         is_dangerous=is_dangerous,

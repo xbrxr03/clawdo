@@ -104,3 +104,38 @@ def log_command(
         pass  # Audit failure should never crash the tool
 
     return str(log_path)
+
+
+import glob as _glob
+import re as _re
+
+def preview_affected_files(commands: list[str]) -> list[str]:
+    """For dry-run: show which files the command would affect."""
+    affected = []
+    full = " && ".join(commands)
+
+    # find ... -exec -> run without -exec to preview matches
+    find_match = _re.search(r'(find\s+\S+.*?)-exec\s+\S+', full)
+    if find_match:
+        preview_cmd = find_match.group(1).strip()
+        try:
+            import subprocess
+            result = subprocess.run(preview_cmd, shell=True, capture_output=True, text=True, timeout=5)
+            if result.stdout:
+                return result.stdout.strip().splitlines()[:10]
+        except Exception:
+            pass
+
+    # rm/mv/cp with glob -> expand the glob
+    for pattern in [r'rm\s+(?:-\w+\s+)?(.*)', r'mv\s+(\S+)\s+\S+', r'cp\s+(\S+)\s+\S+']:
+        m = _re.search(pattern, full)
+        if m:
+            target = m.group(1).strip()
+            try:
+                matches = _glob.glob(os.path.expanduser(target))
+                return [str(f) for f in matches[:10]]
+            except Exception:
+                pass
+            break
+
+    return affected
