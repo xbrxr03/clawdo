@@ -1,4 +1,14 @@
-# claw-do
+<div align="center">
+
+# 🐾 claw-do
+
+### Natural language → shell commands. Offline. Safe by default.
+
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org/)
+[![Ollama](https://img.shields.io/badge/Ollama-Local_AI-000000?logo=ollama&logoColor=white)](https://ollama.ai)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+</div>
 
 **Natural language → shell commands. Offline. Safe by default.**
 ```
